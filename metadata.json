@@ -1,0 +1,7 @@
+{
+  "name": "DubTransit AI",
+  "description": "Real-time public transport dashboard for Dublin using Gemini for intelligent journey planning and service analysis.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
