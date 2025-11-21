@@ -3,7 +3,10 @@ import { JourneyPlan, TransportType, ServiceAlert, AlertSeverity, AlertCategory 
 import { SYSTEM_INSTRUCTION_JOURNEY } from "../constants";
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: import.meta.env.VITE_GEMINI_API_KEY
+});
+
 
 export const getJourneyPlan = async (origin: string, destination: string): Promise<JourneyPlan | null> => {
   try {
