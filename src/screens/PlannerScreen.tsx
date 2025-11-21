@@ -1,21 +1,37 @@
-import React, { useState } from 'react';
+
+import React, { useState, useMemo } from 'react';
 import { 
   View, 
   Text, 
-  TextInput, 
   TouchableOpacity, 
   ScrollView, 
   StyleSheet, 
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView
+  SafeAreaView,
+  Modal,
+  TextInput,
+  FlatList
 } from 'react-native';
 import { JourneyPlan, WeatherSnapshot } from '../types';
 import { getJourneyPlan, searchLocation } from '../services/geminiService';
 import { getWeatherForLocation, getWeatherForLocationAtTime } from '../services/weatherService';
 import { parseDurationToMinutes } from '../utils';
-import { MapPin, Navigation, Footprints, Bus, Train, TramFront, ArrowRight, Thermometer } from 'lucide-react-native';
+import { SAMPLE_STOPS, DUBLIN_LANDMARKS } from '../constants';
+import { 
+  MapPin, 
+  Navigation, 
+  Footprints, 
+  Bus, 
+  Train, 
+  TramFront, 
+  Search, 
+  X, 
+  Map as MapIcon,
+  LocateFixed,
+  ArrowRight
+} from 'lucide-react-native';
 
 const COLORS = {
   dubOrange: '#E3CC00',
@@ -25,48 +41,111 @@ const COLORS = {
   dubLuasPurple: '#B3007D',
   dubDartGreen: '#8CC63E',
   white: '#FFFFFF',
+  neutral100: '#F5F5F5',
   neutral200: '#E5E5E5',
   neutral400: '#A3A3A3',
   neutral600: '#525252',
   neutral900: '#171717',
 };
 
+interface LocationItem {
+  name: string;
+  lat?: number;
+  lon?: number;
+  type: 'stop' | 'landmark' | 'current' | 'map_point';
+}
+
 export default function PlannerScreen() {
-  const [origin, setOrigin] = useState('');
-  const [destination, setDestination] = useState('');
+  const [origin, setOrigin] = useState<LocationItem | null>(null);
+  const [destination, setDestination] = useState<LocationItem | null>(null);
   const [plan, setPlan] = useState<JourneyPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [originWeather, setOriginWeather] = useState<WeatherSnapshot | null>(null);
   const [destinationWeather, setDestinationWeather] = useState<WeatherSnapshot | null>(null);
+  
+  // Modal State
+  const [isModalVisible, setModalVisible] = useState(false);
+  const [selectingType, setSelectingType] = useState<'origin' | 'destination'>('origin');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const openModal = (type: 'origin' | 'destination') => {
+    setSelectingType(type);
+    setSearchQuery('');
+    setModalVisible(true);
+  };
+
+  const handleSelectLocation = (item: LocationItem) => {
+    if (selectingType === 'origin') {
+      setOrigin(item);
+    } else {
+      setDestination(item);
+    }
+    setModalVisible(false);
+  };
+
+  const handleUseCurrentLocation = () => {
+    // In a real Native app, use Expo Location or Geolocation API
+    // For this demo, we simulate a successful geolocation
+    const currentLocation: LocationItem = {
+      name: "Current Location",
+      lat: 53.3498, // Simulating O'Connell St
+      lon: -6.2603,
+      type: 'current'
+    };
+    handleSelectLocation(currentLocation);
+  };
+
+  const handleSelectOnMap = () => {
+    // In a real app, this would navigate to a map picker screen
+    // For this demo, we simulate selecting a point
+    const mapPoint: LocationItem = {
+      name: "Dropped Pin (53.34, -6.26)",
+      lat: 53.3449,
+      lon: -6.2595,
+      type: 'map_point'
+    };
+    handleSelectLocation(mapPoint);
+  };
 
   const handlePlan = async () => {
     if (!origin || !destination) return;
 
     setLoading(true);
-    setPlan(null); // Reset plan while loading new one
+    setPlan(null);
     setOriginWeather(null);
     setDestinationWeather(null);
 
     try {
-      const result = await getJourneyPlan(origin, destination);
+      // Use the precise names for Gemini prompt
+      const result = await getJourneyPlan(origin.name, destination.name);
       setPlan(result);
 
       if (!result) return;
 
       const minutes = parseDurationToMinutes(result.totalDuration);
       
-      // Parallel location search for weather
-      const [originLoc, destLoc] = await Promise.all([
-        searchLocation(origin),
-        searchLocation(destination),
-      ]);
+      // If we already have coordinates (from local constant), use them. 
+      // Otherwise search via Gemini (fallback)
+      let originLoc = { lat: origin.lat, lon: origin.lon };
+      let destLoc = { lat: destination.lat, lon: destination.lon };
 
-      if (originLoc) {
+      if (!originLoc.lat) {
+         const searchRes = await searchLocation(origin.name);
+         if (searchRes) originLoc = { lat: searchRes.lat, lon: searchRes.lon };
+      }
+
+      if (!destLoc.lat) {
+         const searchRes = await searchLocation(destination.name);
+         if (searchRes) destLoc = { lat: searchRes.lat, lon: searchRes.lon };
+      }
+
+      // Weather Fetching
+      if (originLoc.lat && originLoc.lon) {
         const ow = await getWeatherForLocation(originLoc.lat, originLoc.lon);
         setOriginWeather(ow);
       }
 
-      if (destLoc && minutes) {
+      if (destLoc.lat && destLoc.lon && minutes) {
         const arrivalTime = new Date(Date.now() + minutes * 60 * 1000);
         const dw = await getWeatherForLocationAtTime(destLoc.lat, destLoc.lon, arrivalTime);
         setDestinationWeather(dw);
@@ -77,6 +156,31 @@ export default function PlannerScreen() {
       setLoading(false);
     }
   };
+
+  // Suggestions Logic
+  const suggestions = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    
+    const stops: LocationItem[] = SAMPLE_STOPS.map(s => ({ 
+      name: s.stop_name, 
+      lat: s.stop_lat, 
+      lon: s.stop_lon, 
+      type: 'stop' 
+    }));
+    
+    const landmarks: LocationItem[] = DUBLIN_LANDMARKS.map(l => ({
+      name: l.name,
+      lat: l.lat,
+      lon: l.lon,
+      type: 'landmark'
+    }));
+
+    const all = [...landmarks, ...stops];
+    
+    if (!query) return all; // Show default popular items
+    
+    return all.filter(item => item.name.toLowerCase().includes(query));
+  }, [searchQuery]);
 
   const getModeIcon = (mode: string) => {
     switch (mode) {
@@ -116,29 +220,31 @@ export default function PlannerScreen() {
           <View style={styles.formCard}>
             <View style={styles.inputGroup}>
               <View style={styles.inputDot} />
-              <TextInput 
-                style={styles.input}
-                placeholder="Where from?"
-                placeholderTextColor={COLORS.neutral400}
-                value={origin}
-                onChangeText={setOrigin}
-              />
+              <TouchableOpacity 
+                style={styles.inputButton} 
+                onPress={() => openModal('origin')}
+              >
+                <Text style={[styles.inputText, !origin && styles.placeholderText]}>
+                  {origin ? origin.name : "Where from?"}
+                </Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.inputGroup}>
               <View style={[styles.inputDot, styles.inputDotDestination]} />
-              <TextInput 
-                style={styles.input}
-                placeholder="Where to?"
-                placeholderTextColor={COLORS.neutral400}
-                value={destination}
-                onChangeText={setDestination}
-              />
+               <TouchableOpacity 
+                style={styles.inputButton} 
+                onPress={() => openModal('destination')}
+              >
+                <Text style={[styles.inputText, !destination && styles.placeholderText]}>
+                  {destination ? destination.name : "Where to?"}
+                </Text>
+              </TouchableOpacity>
             </View>
             
             <TouchableOpacity 
-              style={styles.planButton} 
+              style={[styles.planButton, (!origin || !destination) && styles.planButtonDisabled]} 
               onPress={handlePlan}
-              disabled={loading}
+              disabled={loading || !origin || !destination}
             >
               {loading ? (
                 <ActivityIndicator color={COLORS.white} />
@@ -185,9 +291,7 @@ export default function PlannerScreen() {
 
               {/* Timeline Steps */}
               <View style={styles.timelineContainer}>
-                {/* Vertical Line */}
                 <View style={styles.timelineLine} />
-
                 {plan.steps.map((step, idx) => (
                   <View key={idx} style={styles.stepRow}>
                     <View style={[
@@ -197,7 +301,6 @@ export default function PlannerScreen() {
                     ]}>
                       {getModeIcon(step.mode)}
                     </View>
-                    
                     <View style={styles.stepContent}>
                       <View style={styles.stepHeader}>
                         <Text style={styles.modeLabel}>{step.mode}</Text>
@@ -210,7 +313,6 @@ export default function PlannerScreen() {
                   </View>
                 ))}
               </View>
-
             </View>
           )}
 
@@ -223,6 +325,94 @@ export default function PlannerScreen() {
 
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Location Picker Modal */}
+      <Modal
+        visible={isModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              Select {selectingType === 'origin' ? 'Origin' : 'Destination'}
+            </Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeButton}>
+               <X size={24} color={COLORS.neutral900} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Search Input */}
+          <View style={styles.modalSearchContainer}>
+             <Search size={20} color={COLORS.neutral400} />
+             <TextInput 
+                style={styles.modalSearchInput}
+                placeholder="Search stops or landmarks"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                clearButtonMode="while-editing"
+             />
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {/* Static Options */}
+            {selectingType === 'origin' && !searchQuery && (
+               <TouchableOpacity style={styles.optionRow} onPress={handleUseCurrentLocation}>
+                  <View style={styles.optionIconBg}>
+                     <LocateFixed size={20} color={COLORS.dubBusBlue} />
+                  </View>
+                  <View>
+                     <Text style={styles.optionTitle}>Current Location</Text>
+                     <Text style={styles.optionSubtitle}>Using GPS</Text>
+                  </View>
+               </TouchableOpacity>
+            )}
+
+            {!searchQuery && (
+               <TouchableOpacity style={styles.optionRow} onPress={handleSelectOnMap}>
+                  <View style={styles.optionIconBg}>
+                     <MapIcon size={20} color={COLORS.dubOrange} />
+                  </View>
+                  <View>
+                     <Text style={styles.optionTitle}>Select on Map</Text>
+                     <Text style={styles.optionSubtitle}>Choose a point</Text>
+                  </View>
+               </TouchableOpacity>
+            )}
+
+            {/* List Header */}
+            <View style={styles.listHeader}>
+               <Text style={styles.listHeaderText}>{searchQuery ? 'SEARCH RESULTS' : 'SUGGESTED'}</Text>
+            </View>
+
+            {/* Results List */}
+            {suggestions.map((item, index) => (
+              <TouchableOpacity 
+                key={`${item.name}-${index}`} 
+                style={styles.resultRow}
+                onPress={() => handleSelectLocation(item)}
+              >
+                <View style={styles.resultIcon}>
+                  {item.type === 'stop' ? (
+                    <Bus size={16} color={COLORS.neutral400} />
+                  ) : (
+                    <MapPin size={16} color={COLORS.neutral400} />
+                  )}
+                </View>
+                <View style={styles.resultTextContainer}>
+                  <Text style={styles.resultTitle}>{item.name}</Text>
+                  {item.type === 'stop' && <Text style={styles.resultSubtitle}>Public Transport Stop</Text>}
+                </View>
+              </TouchableOpacity>
+            ))}
+
+             <View style={{height: 40}} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -291,17 +481,22 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.neutral900,
   },
-  input: {
+  inputButton: {
     backgroundColor: COLORS.dubGray,
     borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 16,
     paddingLeft: 32,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.neutral200,
+  },
+  inputText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.neutral900,
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.neutral200,
+  },
+  placeholderText: {
+    color: COLORS.neutral400,
   },
   planButton: {
     backgroundColor: COLORS.neutral900,
@@ -314,6 +509,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 2,
     elevation: 2,
+  },
+  planButtonDisabled: {
+    opacity: 0.5,
   },
   planButtonText: {
     color: COLORS.white,
@@ -362,7 +560,7 @@ const styles = StyleSheet.create({
   },
   weatherCard: {
     flex: 1,
-    backgroundColor: '#F0F0F0', // slightly darker than dubGray
+    backgroundColor: '#F0F0F0', 
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
@@ -410,7 +608,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 4,
-    borderColor: COLORS.dubGray, // Matches background to simulate gap
+    borderColor: COLORS.dubGray,
     marginRight: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -420,7 +618,7 @@ const styles = StyleSheet.create({
   },
   walkIconCircle: {
     borderWidth: 4,
-    borderColor: COLORS.dubGray, // Outer ring
+    borderColor: COLORS.dubGray,
   },
   stepContent: {
     flex: 1,
@@ -470,5 +668,111 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: COLORS.neutral400,
+  },
+  
+  // Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.neutral100,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    color: COLORS.neutral900,
+  },
+  closeButton: {
+    padding: 4,
+  },
+  modalSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.neutral100,
+    margin: 20,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    height: 48,
+  },
+  modalSearchInput: {
+    flex: 1,
+    marginLeft: 10,
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.neutral900,
+    height: '100%',
+  },
+  modalContent: {
+    flex: 1,
+  },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.neutral100,
+  },
+  optionIconBg: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.neutral100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  optionTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: COLORS.neutral900,
+  },
+  optionSubtitle: {
+    fontSize: 12,
+    color: COLORS.neutral400,
+  },
+  listHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: COLORS.neutral100,
+  },
+  listHeaderText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: COLORS.neutral400,
+    letterSpacing: 1,
+  },
+  resultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.neutral100,
+  },
+  resultIcon: {
+    marginRight: 16,
+  },
+  resultTextContainer: {
+    flex: 1,
+  },
+  resultTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.neutral900,
+  },
+  resultSubtitle: {
+    fontSize: 12,
+    color: COLORS.neutral400,
+    marginTop: 2,
   },
 });

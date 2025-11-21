@@ -633,7 +633,7 @@ export const MapScreen: React.FC<MapScreenProps> = ({ routeSelection, onSelectio
       <div ref={mapContainerRef} className="w-full h-full z-0" />
       
       {/* Top Container: Unified Search & Filter & Weather */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] px-6 pt-20 pb-6 flex flex-col gap-3 bg-gradient-to-b from-white/95 via-white/80 to-transparent pointer-events-none">
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-4 flex flex-col gap-3 bg-gradient-to-b from-white/80 to-transparent pointer-events-none">
          {/* Header Text for Map */}
          <div className="pointer-events-auto flex justify-between items-start">
              <div>

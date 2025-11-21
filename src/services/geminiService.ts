@@ -7,7 +7,10 @@ const apiKey = process.env.API_KEY || "";
 
 // Initialize Gemini Client
 // If apiKey is missing, calls will fail, but we initialize to prevent import crashes
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({
+  apiKey: import.meta.env.VITE_GEMINI_API_KEY
+});
+
 
 export const getJourneyPlan = async (origin: string, destination: string): Promise<JourneyPlan | null> => {
   if (!apiKey) {
